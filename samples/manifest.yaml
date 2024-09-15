@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: http-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: http-server
+  template:
+    metadata:
+      labels:
+        app: http-server
+    spec:
+      serviceAccountName: http-server-sa
+      containers:
+      - name: http-server
+        image: python:3.9-slim
+        ports:
+        - containerPort: 8000
+        command: [ "python", "http_server_builtin.py" ]
