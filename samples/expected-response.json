@@ -1,0 +1,87 @@
+{
+  "meta": {
+    "totalOfSmells": 7,
+    "decodedWorkloads": {
+      "ReplicaSets": 0,
+      "Deployments": 1,
+      "Pods": 0,
+      "Jobs": 0,
+      "CronJobs": 0,
+      "StatefulSets": 0,
+      "DaemonSets": 0
+    }
+  },
+  "data": {
+    "ReplicaSet": [],
+    "Deployment": [
+    {
+      "namespace": "default",
+      "workload_kind": "Deployment",
+      "workload_label_name": "http-server",
+      "workload_position": 0,
+      "rule": "K8S_SEC_RESLIMITS",
+      "message": "Resource.Limits not set into http-server your container is running without Resource.Limits",
+      "suggestion": "Please add Resource.Limits into http-server to avoid running without Resource.Limits"
+    },
+    {
+      "namespace": "default",
+      "workload_kind": "Deployment",
+      "workload_label_name": "http-server",
+      "workload_position": 0,
+      "rule": "K8S_SEC_RESREQUESTS",
+      "message": "Resources.Requests not set into http-server your container is running without Resources.Requests",
+      "suggestion": "Please add Resources.Requests into http-server to avoid running without Resources.Requests"
+    },
+    {
+      "namespace": "default",
+      "workload_kind": "Deployment",
+      "workload_label_name": "http-server",
+      "workload_position": 0,
+      "rule": "K8S_SEC_RUNASUSER",
+      "message": "RunAsUser not set into http-server your container is running with root user",
+      "suggestion": "Please add RunAsUser into http-server to avoid running with root user"
+    },
+    {
+      "namespace": "default",
+      "workload_kind": "Deployment",
+      "workload_label_name": "http-server",
+      "workload_position": 0,
+      "rule": "K8S_SEC_CAPABILITIES",
+      "message": "Capabilities not set into http-server your container is running without Capabilities",
+      "suggestion": "Please add Capabilities into http-server to avoid running without Capabilities"
+    },
+    {
+      "namespace": "default",
+      "workload_kind": "Deployment",
+      "workload_label_name": "http-server",
+      "workload_position": 0,
+      "rule": "K8S_SEC_PRIVESCALATION",
+      "message": "AllowPrivilegeEscalation not set into http-server your container is running with AllowPrivilegeEscalation",
+      "suggestion": "Please add AllowPrivilegeEscalation into http-server to avoid running with AllowPrivilegeEscalation"
+    },
+    {
+      "namespace": "default",
+      "workload_kind": "Deployment",
+      "workload_label_name": "http-server",
+      "workload_position": 0,
+      "rule": "K8S_SEC_ROROOTFS",
+      "message": "ReadOnlyRootFilesystem not set into http-server your container is running with ReadWriteRootFilesystem",
+      "suggestion": "Please add ReadOnlyRootFilesystem into http-server to avoid running with ReadWriteRootFilesystem"
+    },
+    {
+      "namespace": "default",
+      "workload_kind": "Deployment",
+      "workload_label_name": "http-server",
+      "workload_position": 0,
+      "rule": "K8S_SEC_PRIVILEGED",
+      "message": "Privileged not set into http-server your container is running with Privileged",
+      "suggestion": "Please add Privileged into http-server to avoid running with Privileged"
+    }
+    ],
+    "Pod": [],
+    "Job": [],
+    "CronJob": [],
+    "StatefulSet": [],
+    "DaemonSet": []
+  }
+}
