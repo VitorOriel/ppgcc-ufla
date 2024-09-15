@@ -1,6 +1,10 @@
-# Helm Extractor
+# artifacthub.io
 
-The bashcript provided in this directory was responsible to retrieve the dataset from `artifacthub.io`, used into the tests.
+In this directory can be found both dataset extractor and the script to run the tests.
+
+## Dataset Extractor
+
+The bashcript `extractor.sh` provided in this directory was responsible to retrieve the dataset from `artifacthub.io`, used into the tests. Also, the dataset itself can be found in the zip file `dataset.zip`.
 
 In order to extract the dataset, you must:
 1. Have a deployed Kubernetes cluster in the environment where the extraction will run;
@@ -14,3 +18,10 @@ In order to extract the dataset, you must:
 See the youtube video below for this extraction phase demonstration:
 
 https://www.youtube.com/watch?v=nv021DnKymc
+
+## Tests and Results
+
+The Python script `main.py` is responsible to run the tests. You must:
+1. Unzip the dataset (`unzip dataset.zip`);
+2. Run the smelly-kube-api;
+3. Run the tests (`python3 main.py dataset/`);
