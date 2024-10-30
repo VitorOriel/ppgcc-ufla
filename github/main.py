@@ -3,6 +3,7 @@ import os
 from typing import Any
 import json
 import time
+import sys
 
 total_manifests = 0
 valid_manifests = 0
@@ -101,7 +102,7 @@ def get_top_rule(rule_dict: dict[str, int]) -> str:
     return top_rule
 
 before = time.time()
-process_yaml_files("./results_consolidado_1722891954636")
+process_yaml_files(sys.argv[1])
 total_time = int(time.time()-before)
 print(json.dumps({
     'total_projects': total_projects,
