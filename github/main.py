@@ -9,6 +9,7 @@ total_manifests = 0
 valid_manifests = 0
 total_projects = 0
 valid_projects = 0
+number_of_lines = 0
 workload_meta = {'decoded': {'total': 0}, 'affected': {'total': 0}, 'smells': {}}
 smells_meta = {'total': 0}
 workload_with_rules = {}
@@ -31,7 +32,7 @@ def send_file(file_path: str) -> requests.Response:
     )
     return response
 
-def threat_result(result: dict[str, dict]) -> None:
+def treat_result(result: dict[str, dict]) -> None:
     global workload_meta
     global smells_meta
     global workload_with_rules
@@ -44,23 +45,36 @@ def threat_result(result: dict[str, dict]) -> None:
     for key, value in dict(result['data']).items():
         if key not in workload_meta['smells']:
             workload_meta['smells'][key] = 0
-        kubeSmells: list[dict[str, Any]] = list(value)
-        workload_meta['smells'][key] += len(kubeSmells)
-        if kubeSmells:
-            workload_meta['affected']['total'] += 1
-            if key not in workload_meta['affected']:
-                workload_meta['affected'][key] = 0
-            workload_meta['affected'][key] += 1
-            if key not in workload_with_rules:
-                workload_with_rules[key] = {}
-            for smell in kubeSmells:
-                rule = smell['rule']
-                if rule not in smells_meta:
-                    smells_meta[rule] = 0
-                smells_meta[rule] += 1
-                if rule not in workload_with_rules[key]:
-                    workload_with_rules[key][rule] = 0
-                workload_with_rules[key][rule] += 1
+        kube_smells: list[dict[str, Any]] = list(value)
+        workload_meta['smells'][key] += len(kube_smells)
+        if kube_smells:
+            treat_smells(key, kube_smells)
+
+def treat_smells(key: str, kube_smells: list[dict]) -> None:
+    global smells_meta
+    global workload_with_rules
+    workload_meta['affected']['total'] += 1
+    if key not in workload_meta['affected']:
+        workload_meta['affected'][key] = 0
+    workload_meta['affected'][key] += 1
+    if key not in workload_with_rules:
+        workload_with_rules[key] = {}
+    for smell in kube_smells:
+        rule = smell['rule']
+        if rule not in smells_meta:
+            smells_meta[rule] = 0
+        smells_meta[rule] += 1
+        if rule not in workload_with_rules[key]:
+            workload_with_rules[key][rule] = 0
+        workload_with_rules[key][rule] += 1
+
+def evaluate_number_of_lines(file_path: str) -> None:
+    global number_of_lines
+    with open(file_path, 'r') as file:
+        for line in file.readlines():
+            line = line.strip()
+            if line and not line.startswith('#'):
+                number_of_lines += 1
 
 def process_yaml_files(directory: str):
     global total_manifests
@@ -77,10 +91,12 @@ def process_yaml_files(directory: str):
             for file in files:
                 if file.endswith('.yaml') or file.endswith('.yml'):
                     total_manifests += 1
-                    response = send_file(os.path.join(root_dir, file))
+                    file_path = os.path.join(root_dir, file)
+                    response = send_file(file_path)
                     if response.ok:
                         valid_manifests += 1
-                        threat_result(response.json())
+                        treat_result(response.json())
+                        evaluate_number_of_lines(file_path)
                         project_dict[dir_name].append(response.json())
         if project_dict[dir_name]:
             valid_projects += 1
@@ -99,7 +115,7 @@ def get_top_rule(rule_dict: dict[str, int]) -> str:
             continue
         if greater < value:
             top_rule, greater = key, value
-    return top_rule
+    return f"{top_rule} with {greater} smells"
 
 before = time.time()
 process_yaml_files(sys.argv[1])
@@ -109,6 +125,7 @@ print(json.dumps({
     'valid_projects': valid_projects,
     'total_manifests': total_manifests,
     'valid_manifests': valid_manifests,
+    'number_of_lines': number_of_lines,
     'workload_meta': workload_meta,
     'smells_meta': smells_meta,
     'workload_with_rules': {
@@ -117,6 +134,18 @@ print(json.dumps({
             for workload, rule_dict in workload_with_rules.items()
         },
         'details': workload_with_rules,
+    },
+    'smells_density': {
+        'by_lines': {
+            key: value/(number_of_lines/1000)
+            for key, value in smells_meta.items()
+            if key != "total"
+        },
+        'by_workloads': {
+            key: value/workload_meta['decoded']['total']
+            for key, value in smells_meta.items()
+            if key != "total"
+        }
     },
     'top_10_lowest': [f"{manifest['project']}: {manifest['totalOfSmells']}" for manifest in all_manifests[:10]],
     'top_10_highest': [f"{manifest['project']}: {manifest['totalOfSmells']}" for manifest in all_manifests[len(all_manifests)-10:]],
