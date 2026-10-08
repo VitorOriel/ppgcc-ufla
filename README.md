@@ -1,18 +1,144 @@
-# PPGCC-UFLA
+# Identifying Security Smells in Kubernetes manifests
 
-This repository provides the abstract, the applications and a sample, related to the dissertation "Smelly Kube: A tool used to identify security smells in Kubernetes infrastructure manifests" submitted to the *Programa de Pós-Graduação em Ciência da Computação na Universidade Federal de Lavras*.
+Replication package for the paper *Identifying Security Smells in Kubernetes manifests*, by
+Vitor O. C. N. Borges, Luiz H. A. Correia and Rafael S. Durelli, submitted to IEEE Access.
+
+This repository holds the two datasets analysed in the paper, the scripts that produced the
+reported figures, the collection scripts, and a sample manifest for trying the tool out. The
+analyser itself lives in a separate repository, linked below.
+
+The work originates from the dissertation *Smelly Kube: A tool used to identify security smells in
+Kubernetes infrastructure manifests*, submitted to the *Programa de Pós-Graduação em Ciência da
+Computação na Universidade Federal de Lavras*.
 
 ## Software
-Both Smelly Kube API and Visual Studio Code plugin can be found in the following repositories, which contains information about the applications technologies and dependencies, and instructions to run them.
 
-- [security-smells-api](https://github.com/VitorOriel/security-smells-api/): The Smelly Kube API (server) repository
-- [smelly-kube-vscode-plugin](https://github.com/VitorOriel/smelly-kube-vscode-plugin/): The Smelly Kube Visual Studio Code (client) repository
+Both the Smelly Kube API and the Visual Studio Code plugin have their own repositories, each
+containing the technologies, dependencies and instructions needed to run them.
 
-In [samples](./samples/) can be found a sample Kubernetes manifest to try out the Smelly Kube API. Also, a curl request and the expected JSON response.
+- [security-smells-api](https://github.com/VitorOriel/security-smells-api/): the Smelly Kube API (server)
+- [smelly-kube-vscode-plugin](https://github.com/VitorOriel/smelly-kube-vscode-plugin/): the Visual Studio Code plugin (client)
 
-## Dataset, Tests and Results
+## Repository layout
 
-The directory [artifacthub.io](./artifacthub.io/) presents instructions to generate the dataset from artifacthub.io, and the script used to run the tests.
+| Path | Contents |
+| --- | --- |
+| [artifacthub.io](./artifacthub.io/) | Artifact Hub dataset, its collection script and the analysis driver |
+| [github](./github/) | GitHub dataset, its collection script and the analysis driver |
+| [false-positives](./false-positives/) | Independent audit of the precision of the `SCC_VALUE` rule |
+| [samples](./samples/) | A sample Kubernetes manifest, a `curl` request and the expected JSON response |
 
-## Paper abstract
-The Kubernetes platform has stood out for the orchestration and management of microservices due to its ability to handle large volumes of services and its scalability. However, neglecting security when designing Kubernetes manifests can lead to significant risks, leaving microservices susceptible to various vulnerabilities. This work presents Smelly Kube, a tool for identifying security smells in Kubernetes manifests. It was developed using a client/server architecture, comprising: i) Client: a Visual Studio Code plugin, and ii) Server: an application developed in Golang to analyze these manifests and identify the security smells. Integration with Visual Studio Code offers developers a user-friendly and efficient interface to perform security checks directly in the development environment, facilitating the adoption and continuous use of the tool. A case study was conducted to validate the tool’s effectiveness, using real-world production scenarios and various microservices configurations. The results showed that Smelly Kube is promising and may contribute to the security maturity of overall Kubernetes applications.
+## Datasets
+
+Both datasets are distributed as archives in this repository. The GitHub archive is tracked with
+[Git LFS](https://git-lfs.com/), so `git lfs install` and `git lfs pull` are required to obtain its
+contents rather than the pointer file.
+
+| Dataset | Archive | Size | Manifests |
+| --- | --- | --- | --- |
+| Artifact Hub | `artifacthub.io/dataset.zip` | 12 MB | 5,055 |
+| GitHub | `github/results_consolidado_1723666729475.zip` | 239 MB | 183,225 |
+
+```bash
+git lfs install
+git lfs pull
+unzip artifacthub.io/dataset.zip -d artifacthub.io/
+unzip github/results_consolidado_1723666729475.zip -d github/
+```
+
+The extracted directories are listed in `.gitignore` and are never committed; the archives are the
+distribution format.
+
+The Artifact Hub dataset is flat: each file is one Helm chart rendered with
+`helm install --dry-run`, so the manifest is the only unit of observation and there is no owner or
+repository dimension.
+
+The GitHub dataset is a tree of `owner/repository/...` directories, collected on 14 August 2024,
+and carries two provenance manifests at its root:
+
+- `repositories.csv` — one row per repository, with the GitHub numeric id, full name, description,
+  creation, update and push timestamps, stargazers, language, forks, open issues, topics, network
+  and subscribers counts, as captured at collection time.
+- `files.csv` — one row per collected manifest, with the repository id, the repository full name
+  and the path. Note that this manifest was generated by a traversal with glob semantics and
+  therefore omits the 2,284 files whose path contains a dot-prefixed component; those files are
+  present in the archive and were analysed. Enumerate the tree directly for a complete listing.
+
+Because the numeric repository ids are recorded, every repository in the corpus remains
+identifiable through the GitHub API independently of this repository.
+
+## Reproducing the analysis
+
+The analysis drivers send each manifest to the Smelly Kube API over HTTP and aggregate the
+responses, so the API has to be running first.
+
+```bash
+git clone https://github.com/VitorOriel/security-smells-api.git
+cd security-smells-api
+docker compose up
+```
+
+The API listens on port 3000 and exposes a single endpoint, `POST /api/v1/smelly`. It is
+stateless and requires no database. With it running, each dataset is analysed independently:
+
+```bash
+python3 artifacthub.io/main.py artifacthub.io/dataset   > artifacthub-results.json
+python3 github/main.py github/results_consolidado_1723666729475 > github-results.json
+```
+
+Each driver prints a single JSON report containing the manifest and workload counts, the number of
+detections per rule, the smell density per thousand lines of code and per decoded workload, the
+most prevalent rule per workload kind, and the execution time. Requirements: Python 3.9 or later
+and `requests`.
+
+## Reported figures
+
+The figures below are the ones reported in the paper, and are what a successful run reproduces.
+
+| | Artifact Hub | GitHub |
+| --- | --- | --- |
+| Distinct owners | — | 3,408 |
+| Distinct repositories | — | 4,857 |
+| Total manifests | 5,055 | 183,225 |
+| Valid manifests | 2,107 | 34,191 |
+| Decoded workloads | 4,549 | 42,798 |
+| Detections | 27,967 | 282,963 |
+| Detections per decoded workload | 6.15 | 6.61 |
+
+A manifest is valid when it is non-empty, well-formed YAML, not a Helm template, and declares at
+least one of the seven supported workload kinds: `Pod`, `Job`, `CronJob`, `ReplicaSet`,
+`Deployment`, `StatefulSet` and `DaemonSet`.
+
+## Collection
+
+- `artifacthub.io/extractor.sh` queries the Artifact Hub `/api/v1/helm-exporter` endpoint and
+  renders every chart with `helm install --dry-run`. It requires `helm`, `jq` and an Artifact Hub
+  API key. This is the script that produced the Artifact Hub dataset.
+- `github/extractor.py` searches repositories, enumerates each default branch, downloads every
+  file with a YAML extension and keeps those matching the two content filters used in the paper,
+  then writes the dataset tree together with `files.csv` and `repositories.csv`. It requires a
+  `GITHUB_TOKEN` in the environment.
+
+  ```bash
+  GITHUB_TOKEN=... python3 github/extractor.py github/results
+  ```
+
+  This script is **not** the one that produced the GitHub dataset. The original program was
+  written in JavaScript by a collaborator and is no longer available, so the exact search query
+  and ordering used in August 2024 cannot be reported. `github/extractor.py` was written for this
+  replication package to make the collection procedure explicit and repeatable; it reproduces the
+  dataset layout and the content filters, and it enumerates repository trees instead of using the
+  code search endpoint, which is subject to tighter result and rate limits. The corpus actually
+  analysed is the one distributed here, and it is described by the two provenance manifests above.
+
+## Auditing
+
+`false-positives/` contains an independent reimplementation that reclassifies every capabilities
+drop list in both datasets to measure the precision of the `SCC_VALUE` rule, which is the only rule
+in the catalog whose predicate is stricter than the property it operationalises. See its
+[README](./false-positives/README.md) for details.
+
+## Sample
+
+[samples](./samples/) contains a Kubernetes manifest for trying the Smelly Kube API out, together
+with a `curl` request and the expected JSON response.

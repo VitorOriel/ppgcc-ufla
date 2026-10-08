@@ -1,7 +1,7 @@
 # False positive audit
 
-This directory contains the independent reimplementation used to audit the precision of the
-`SCC_VALUE` rule of Smelly Kube over both datasets.
+This directory contains the audit used to measure the precision of the `SCC_VALUE` rule of
+Smelly Kube over a dataset of Kubernetes manifests.
 
 ## What it evaluates
 
@@ -22,102 +22,76 @@ resulting configuration is equivalent to dropping all capabilities. `SCC_VALUE` 
 only rule in the catalog whose predicate is stricter than the property it operationalizes, and the
 only possible source of false positives.
 
-This script classifies every capabilities drop list in both datasets under **both** rules and
-reports the disagreement:
+The audit is exhaustive rather than sampled: it reclassifies every `SCC_VALUE` detection in the
+dataset, not a subset.
 
-| Term | Meaning |
-| --- | --- |
-| `positional_detections` | containers flagged by the rule as implemented in Smelly Kube |
-| `kubernetes_detections` | containers that are genuinely non-compliant under Kubernetes semantics |
-| `false_positives` | flagged by the positional rule, compliant under Kubernetes semantics |
+## How it works
 
-The audit is exhaustive rather than sampled: it reclassifies the entire population of both
-datasets, not a subset.
+The audit is anchored on the detections reported by Smelly Kube rather than on an independent
+detection of its own, which is what makes the result a statement about the tool. A container only
+counts as a false positive if Smelly Kube flagged it.
+
+For each manifest, the script sends the file to the Smelly Kube API, keeps the `SCC_VALUE`
+detections from the response, locates the corresponding workload in the manifest by kind and name,
+and reclassifies the `drop` list of each flagged container under Kubernetes semantics. A detection
+is a false positive when the positional predicate reports it and `ALL` is present anywhere in the
+list.
 
 ## How to run
 
-The script reads YAML directly and does not require the Smelly Kube API to be running. It takes
-the dataset root as its only argument and writes a JSON report to standard output.
+The API has to be running first, exactly as for the analysis drivers:
 
 ```bash
-unzip ../artifacthub.io/dataset.zip -d ../artifacthub.io/
-python3 false_positives.py ../artifacthub.io/dataset > artifacthub.json
+git clone https://github.com/VitorOriel/security-smells-api.git
+cd security-smells-api
+docker compose up
 ```
 
+The script then takes the dataset root as its only argument and writes a JSON report to standard
+output:
+
 ```bash
-unzip ../github/results_consolidado_1723666729475.zip -d ../github/
+python3 false_positives.py ../artifacthub.io/dataset                > artifacthub.json
 python3 false_positives.py ../github/results_consolidado_1723666729475 > github.json
 ```
 
-Requirements: Python 3.9 or later and `pyyaml`.
+Requirements: Python 3.9 or later, `requests` and `pyyaml`.
 
 ```bash
-pip install pyyaml
+pip install requests pyyaml
 ```
 
 ## Output
 
-The report below is the actual output of the Artifact Hub run.
+| Field | Meaning |
+| --- | --- |
+| `total_files` | files submitted to the API |
+| `valid_files` | files the API accepted |
+| `rule_detections` | `SCC_VALUE` detections reported by Smelly Kube |
+| `flagged_workloads` | distinct workloads carrying at least one of those detections |
+| `reclassified_detections` | detections the audit was able to re-examine |
+| `false_positives` | detections that are compliant under Kubernetes semantics |
+| `false_positive_rate` | `false_positives / rule_detections` |
+| `detections_by_kind` | detections grouped by workload kind |
+| `unresolved_workloads` | workloads the audit could not locate in the manifest |
+| `false_positive_details` | one entry per false positive, with file, workload kind, workload name, container name and the offending `drop` list |
 
-```json
-{
-    "total_files": 5055,
-    "parsed_documents": 19202,
-    "skipped_documents": 3394,
-    "total_workloads": 4547,
-    "total_containers": 4866,
-    "positional_detections": 83,
-    "kubernetes_detections": 83,
-    "false_positives": 0,
-    "false_positive_rate": 0.0,
-    "detections_by_kind": {
-        "DaemonSet": 31,
-        "StatefulSet": 24,
-        "Job": 1,
-        "Deployment": 25,
-        "CronJob": 2
-    },
-    "false_positive_details": []
-}
-```
-
-`positional_detections` and `kubernetes_detections` are equal here, which is the result the paper
-reports for this dataset: all 83 detections are genuine, and none of them declares `ALL` outside
-the first position of the drop list.
-
-`false_positive_details` lists one entry per false positive, with the file, the workload kind, the
-workload name, the container name and the offending `drop` list, so that every case can be
-inspected manually.
-
-## Expected figures
-
-These are the figures reported in the paper. The Artifact Hub run above reproduces them exactly.
-
-| Dataset | `positional_detections` | `false_positives` | Rate |
-| --- | --- | --- | --- |
-| Artifact Hub | 83 | 0 | 0% |
-| GitHub | 901 | 5 | 0.55% |
-
-The five GitHub false positives are concentrated in four files of two repositories, and all four
-are test fixtures that other policy engines ship as examples of *compliant* configuration, namely
-`pod-good.yaml` from Kyverno and `valid_example.yaml` from Regula. Manifests deliberately authored
-to be correct are precisely the ones the positional test misclassifies.
+Two of these fields exist to audit the instrument itself rather than the tool.
+`reclassified_detections` must equal `rule_detections`, and `unresolved_workloads` must be empty.
+If either does not hold, the audit failed to re-examine part of the population and its
+false positive count is not a lower bound on anything.
 
 ## Method notes
 
-The traversal is independent of the analyzer rather than derived from it, which is what makes the
-comparison meaningful, but three conventions were kept deliberately aligned with Smelly Kube so
-that the detection counts are comparable:
-
-- Documents are separated by a line containing only `---`.
-- Chunks containing `{{` are treated as Helm templates and skipped, as are chunks that fail to
-  parse as YAML. Both are counted in `skipped_documents`.
+- Documents are separated by a line containing only `---`. Chunks containing `{{` are treated as
+  Helm templates and skipped, as are chunks that fail to parse as YAML.
 - Only the seven workload kinds supported by Smelly Kube are considered: `Pod`, `Job`, `CronJob`,
   `ReplicaSet`, `Deployment`, `StatefulSet` and `DaemonSet`. The pod specification is read from
   `spec` for `Pod`, from `spec.jobTemplate.spec.template.spec` for `CronJob`, and from
   `spec.template.spec` for the remaining kinds.
-- `SCC_VALUE` is evaluated only when `securityContext.capabilities` is declared on the container.
-  A container that omits the field is reported by `SCC_UNSET` instead and does not enter this
-  audit, which mirrors the partition between the `_UNSET` and `_VALUE` groups of the catalog.
-- Capabilities are container-scoped in the Kubernetes API and admit no pod-level counterpart, so
-  no pod-level fallback is applied. Only `spec.containers` is traversed, matching the analyzer.
+- A container whose `securityContext.capabilities` is absent is reported by `SCC_UNSET` instead of
+  `SCC_VALUE` and never reaches this audit, which mirrors the partition between the `_UNSET` and
+  `_VALUE` groups of the catalog. A container that declares `capabilities` without a `drop` list is
+  reported by `SCC_VALUE` and does reach it.
+- Capabilities are container-scoped in the Kubernetes API and admit no pod-level counterpart, so no
+  pod-level fallback is applied. Only `spec.containers` is traversed, matching the analyser.
