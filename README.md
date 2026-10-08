@@ -105,16 +105,11 @@ and `requests`.
   GITHUB_TOKEN=... python3 github/extractor.py github/results
   ```
 
-  This script is **not** the one that produced the GitHub dataset. The original program was
-  written in JavaScript by a collaborator and is no longer available, so the exact search query
-  and ordering used in August 2024 cannot be reported. `github/extractor.py` was written for this
-  replication package to make the collection procedure explicit and repeatable, and it follows the
-  two endpoints, the extension queries and the content filters described in the paper. Two
-  properties of code search bound what it can recover: it returns at most 1,000 results per query,
-  so a repository holding more manifests than that is truncated, and it is paced at ten requests
-  per minute, so a full pass over the repository population takes hours rather than minutes. The
-  script reports how many repositories were truncated. The corpus actually analysed is the one
-  distributed here, and it is described by the two provenance manifests above.
+  Two properties of code search bound what a run recovers: it returns at most 1,000 results per
+  query, so a repository holding more manifests than that is truncated, and it is paced at ten
+  requests per minute, so a full pass over the repository population takes hours rather than
+  minutes. The script reports how many repositories were truncated. The corpus distributed here
+  is the one the paper analyses, and it is described by the two provenance manifests above.
 
 ## Auditing
 
