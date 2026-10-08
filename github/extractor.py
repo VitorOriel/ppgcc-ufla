@@ -14,9 +14,13 @@ STARS_WINDOWS = [
     '0..9', '10..24', '25..49', '50..99', '100..199', '200..399',
     '400..799', '800..1599', '1600..3199', '3200..6399', '>=6400',
 ]
+CODE_SEARCH_TERM = 'apiVersion'
+CODE_SEARCH_EXTENSIONS = ['extension:yaml', 'extension:yml']
+CODE_SEARCH_PACING = 6
+SEARCH_MAX_PAGES = 10
+SEARCH_PER_PAGE = 100
 APIVERSION_PATTERN = re.compile(r'apiVersion:\s*(\S+)\s*\n')
 KIND_PATTERN = re.compile(r'kind:\s*(\S+)\s*\n')
-YAML_EXTENSIONS = ('.yaml', '.yml')
 CSV_COLUMNS = [
     'id', 'full_name', 'description', 'created_at', 'updated_at', 'pushed_at',
     'html_url', 'stargazers_count', 'language', 'forks_count',
@@ -30,6 +34,8 @@ total_candidates = 0
 total_downloaded = 0
 total_rejected = 0
 total_skipped = 0
+code_search_requests = 0
+truncated_repositories = []
 failed_requests = []
 
 def headers() -> dict:
@@ -41,6 +47,12 @@ def headers() -> dict:
 def wait_for_rate_limit(response: requests.Response) -> bool:
     if response.status_code not in (403, 429):
         return False
+    retry_after = response.headers.get('Retry-After')
+    if retry_after is not None:
+        delay = int(retry_after) + 1
+        print(f"secondary rate limit, sleeping {delay}s", file=sys.stderr, flush=True)
+        time.sleep(delay)
+        return True
     remaining = response.headers.get('X-RateLimit-Remaining')
     reset = response.headers.get('X-RateLimit-Reset')
     if remaining is not None and remaining != '0':
@@ -50,33 +62,31 @@ def wait_for_rate_limit(response: requests.Response) -> bool:
         return True
     delay = int(reset) - int(time.time()) + 5
     if delay > 0:
-        print(f"rate limit reached, sleeping {delay}s", file=sys.stderr)
+        print(f"rate limit reached, sleeping {delay}s", file=sys.stderr, flush=True)
         time.sleep(delay)
     return True
 
 def github_get(url: str, params: dict = None) -> dict:
-    global failed_requests
     for _ in range(5):
         response = session.get(url, headers=headers(), params=params, timeout=60)
         if wait_for_rate_limit(response):
             continue
         if response.status_code == 200:
             return response.json()
-        if response.status_code in (404, 409, 451):
+        if response.status_code in (404, 409, 422, 451):
             return None
         time.sleep(5)
     failed_requests.append({'url': url, 'params': params, 'status': response.status_code})
     return None
 
 def search_repositories(stars_window: str) -> None:
-    global repositories
     query = f"{REPOSITORY_QUERY} stars:{stars_window}"
-    for page in range(1, 11):
+    for page in range(1, SEARCH_MAX_PAGES + 1):
         payload = github_get(f"{API}/search/repositories", {
             'q': query,
             'sort': 'stars',
             'order': 'desc',
-            'per_page': 100,
+            'per_page': SEARCH_PER_PAGE,
             'page': page,
         })
         if not payload or not payload.get('items'):
@@ -84,28 +94,41 @@ def search_repositories(stars_window: str) -> None:
         for item in payload['items']:
             repositories[item['id']] = {'full_name': item['full_name'],
                                         'default_branch': item['default_branch']}
-        if len(payload['items']) < 100:
+        if len(payload['items']) < SEARCH_PER_PAGE:
             return
+
+def search_code(full_name: str) -> list[str]:
+    global code_search_requests
+    paths = set()
+    for extension in CODE_SEARCH_EXTENSIONS:
+        query = f"{CODE_SEARCH_TERM} repo:{full_name} {extension}"
+        for page in range(1, SEARCH_MAX_PAGES + 1):
+            time.sleep(CODE_SEARCH_PACING)
+            code_search_requests += 1
+            payload = github_get(f"{API}/search/code", {
+                'q': query,
+                'per_page': SEARCH_PER_PAGE,
+                'page': page,
+            })
+            if not payload:
+                break
+            items = payload.get('items') or []
+            for item in items:
+                if item.get('path'):
+                    paths.add(item['path'])
+            if page == 1 and int(payload.get('total_count') or 0) > SEARCH_MAX_PAGES * SEARCH_PER_PAGE:
+                truncated_repositories.append({'repository': full_name,
+                                               'query': query,
+                                               'total_count': payload['total_count']})
+            if len(items) < SEARCH_PER_PAGE:
+                break
+    return sorted(paths)
 
 def describe_repository(full_name: str) -> dict:
     payload = github_get(f"{API}/repos/{full_name}")
     if not payload:
         return None
     return {column: payload.get(column) for column in CSV_COLUMNS}
-
-def list_yaml_paths(full_name: str, default_branch: str) -> list[str]:
-    payload = github_get(f"{API}/repos/{full_name}/git/trees/{default_branch}",
-                         {'recursive': '1'})
-    if not payload:
-        return []
-    paths = []
-    for entry in payload.get('tree') or []:
-        if entry.get('type') != 'blob':
-            continue
-        path = entry.get('path') or ''
-        if path.endswith(YAML_EXTENSIONS):
-            paths.append(path)
-    return paths
 
 def is_kubernetes_manifest(content: str) -> bool:
     return bool(APIVERSION_PATTERN.search(content)) and bool(KIND_PATTERN.search(content))
@@ -114,7 +137,6 @@ def download_file(full_name: str, default_branch: str, path: str, output: str) -
     global total_downloaded
     global total_rejected
     global total_skipped
-    global collected_files
     destination = os.path.join(output, full_name, path)
     if os.path.exists(destination):
         total_skipped += 1
@@ -165,7 +187,7 @@ def extract(output: str) -> None:
     os.makedirs(output, exist_ok=True)
     for stars_window in STARS_WINDOWS:
         search_repositories(stars_window)
-        print(f"window {stars_window}: {len(repositories)} repositories so far", file=sys.stderr)
+        print(f"window {stars_window}: {len(repositories)} repositories so far", file=sys.stderr, flush=True)
     descriptions = {}
     for index, repository in enumerate(repositories.values(), 1):
         full_name = repository['full_name']
@@ -173,28 +195,32 @@ def extract(output: str) -> None:
         if not description:
             continue
         descriptions[full_name] = description
-        for path in list_yaml_paths(full_name, repository['default_branch']):
+        for path in search_code(full_name):
             total_candidates += 1
             download_file(full_name, repository['default_branch'], path, output)
-        if index % 50 == 0:
-            print(f"{index}/{len(repositories)} repositories processed", file=sys.stderr)
+        print(f"{index}/{len(repositories)} {full_name}: "
+              f"{total_downloaded} downloaded, {total_rejected} rejected", file=sys.stderr, flush=True)
     write_files_csv(output, descriptions)
     write_repositories_csv(output, descriptions)
 
 if not TOKEN:
-    print("GITHUB_TOKEN is not set; the search and tree endpoints will be rate limited to 60 requests per hour", file=sys.stderr)
+    raise SystemExit("GITHUB_TOKEN is not set; the code search endpoint requires authentication")
 before = time.time()
 extract(sys.argv[1])
 total_time = int(time.time()-before)
 print(json.dumps({
     'repository_query': REPOSITORY_QUERY,
     'stars_windows': STARS_WINDOWS,
+    'code_search_term': CODE_SEARCH_TERM,
+    'code_search_extensions': CODE_SEARCH_EXTENSIONS,
     'total_repositories': len(repositories),
+    'code_search_requests': code_search_requests,
     'total_candidates': total_candidates,
     'total_downloaded': total_downloaded,
     'total_skipped': total_skipped,
     'total_rejected': total_rejected,
     'total_collected': len(collected_files),
+    'truncated_repositories': len(truncated_repositories),
     'failed_requests': len(failed_requests),
     'time_taken': f"{int(total_time/60)} minutes and {total_time%60} seconds",
 }, indent=4))
