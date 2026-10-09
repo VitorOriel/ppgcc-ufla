@@ -10,14 +10,20 @@ SUBSTRING_SEPARATOR = '---'
 WORKLOAD_KINDS = ['Pod', 'Job', 'CronJob', 'ReplicaSet', 'Deployment', 'StatefulSet', 'DaemonSet']
 TRACKED_CAPABILITIES = ['SYS_ADMIN', 'NET_ADMIN', 'SYS_PTRACE', 'SYS_MODULE', 'ALL']
 
-# Instrument variants under comparison. 'iteration' selects how a file is split into
-# documents: 'file' hands the whole file to the YAML loader, so one malformed document
-# discards the file; 'chunk' splits first and discards only the offending fragment.
+# Traversal variants, exposed so that the choices behind the reported figures can be
+# inspected and varied. The defaults below are the combination the reported figures
+# come from, and the only one that reproduces them.
+# 'iteration' selects how a file is split into documents: 'chunk' splits first and
+# discards only a malformed fragment, 'file' hands the whole file to the YAML loader so
+# that one malformed document discards the file.
+# 'separator' selects the document separator: 'substring' cuts wherever three hyphens
+# occur, which is what the analyzer under study does, and 'line' requires a line
+# containing exactly three hyphens.
 # 'podspec' selects what counts as an embedded pod specification in a document whose
 # kind is out of scope: 'containers' requires a container list, 'any' also accepts a
 # list of initialization containers alone.
 ITERATION = os.environ.get('ITERATION', 'chunk')
-SEPARATOR = os.environ.get('SEPARATOR', 'line')
+SEPARATOR = os.environ.get('SEPARATOR', 'substring')
 PODSPEC = os.environ.get('PODSPEC', 'containers')
 
 total_files = 0
@@ -31,6 +37,8 @@ out_of_scope = {
     'init_containers': 0,
     'alpha_api_versions': 0,
     'beta_api_versions': 0,
+    'by_kind': {},
+    'by_api_group': {},
 }
 
 in_scope = {
@@ -126,6 +134,12 @@ def count_containers_at_any_depth(document: dict, key: str) -> int:
         counted += len(container_list)
     return counted
 
+def get_api_group(document: dict) -> str:
+    api_version = str(document.get('apiVersion') or '')
+    if '/' not in api_version:
+        return 'core'
+    return api_version.split('/', 1)[0]
+
 def is_privileged(container) -> bool:
     if not isinstance(container, dict):
         return False
@@ -155,6 +169,15 @@ def examine_out_of_scope(document: dict) -> None:
         out_of_scope['alpha_api_versions'] += 1
     elif 'beta' in api_version:
         out_of_scope['beta_api_versions'] += 1
+    kind = str(document.get('kind') or 'None')
+    entry = out_of_scope['by_kind'].setdefault(kind, {'documents': 0, 'containers': 0, 'init_containers': 0})
+    entry['documents'] += 1
+    entry['containers'] += containers
+    entry['init_containers'] += init_containers
+    group = get_api_group(document)
+    group_entry = out_of_scope['by_api_group'].setdefault(group, {'documents': 0, 'containers': 0})
+    group_entry['documents'] += 1
+    group_entry['containers'] += containers
 
 def examine_in_scope(document: dict) -> None:
     in_scope['workloads'] += 1
@@ -210,6 +233,10 @@ def process_yaml_files(directory: str) -> None:
                 examine_out_of_scope(document)
 
 process_yaml_files(sys.argv[1])
+out_of_scope['by_kind'] = dict(sorted(out_of_scope['by_kind'].items(),
+                                      key=lambda item: -item[1]['documents']))
+out_of_scope['by_api_group'] = dict(sorted(out_of_scope['by_api_group'].items(),
+                                          key=lambda item: -item[1]['documents']))
 print(json.dumps({
     'variant': {'iteration': ITERATION, 'separator': SEPARATOR, 'podspec': PODSPEC},
     'total_files': total_files,
